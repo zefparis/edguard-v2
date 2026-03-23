@@ -7,7 +7,7 @@ const headers = () => {
   if (!TENANT) throw new Error('Missing VITE_TENANT_ID')
   return {
     'Content-Type': 'application/json',
-    'x-api-key': API_KEY,
+    'X-API-Key': API_KEY,
   }
 }
 
