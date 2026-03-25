@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { InstallAppCard } from '../components/InstallAppCard'
 
 export function Home() {
   const nav = useNavigate()
@@ -105,6 +106,8 @@ export function Home() {
                 <div className="info-body">{card.body}</div>
               </div>
             ))}
+
+            <InstallAppCard appName="EdGuard" badgeClassName="badge badge-cyan" />
           </div>
         </div>
       </div>
