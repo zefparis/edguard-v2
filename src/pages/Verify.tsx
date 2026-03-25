@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SelfieCapture } from '../components/SelfieCapture'
 import { verifyWorker } from '../services/api'
@@ -14,6 +14,14 @@ export function Verify() {
   const [lastName, setLastName] = useState(worker?.lastName ?? '')
   const [result, setResult] = useState<{ similarity: number; firstName: string } | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
+
+  const handleFirstNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setFirstName(e.target.value)
+  }, [])
+
+  const handleLastNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setLastName(e.target.value)
+  }, [])
 
   function handleIdentity(e: React.FormEvent) {
     e.preventDefault()
@@ -66,11 +74,11 @@ export function Verify() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="field">
                 <label>First Name</label>
-                <input value={firstName} onChange={e => setFirstName(e.target.value)} required placeholder="Jane" />
+                <input value={firstName} onChange={handleFirstNameChange} required placeholder="Jane" />
               </div>
               <div className="field">
                 <label>Last Name</label>
-                <input value={lastName} onChange={e => setLastName(e.target.value)} required placeholder="Doe" />
+                <input value={lastName} onChange={handleLastNameChange} required placeholder="Doe" />
               </div>
             </div>
             <button className="btn btn-primary" type="submit">Continue →</button>

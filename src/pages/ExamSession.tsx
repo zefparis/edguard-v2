@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SelfieCapture } from '../components/SelfieCapture'
 import { verifyWorker } from '../services/api'
@@ -37,6 +37,50 @@ function formatCountdown(ms: number): string {
   const ss = s % 60
   return `${mm}:${String(ss).padStart(2, '0')}`
 }
+
+type IdentityCheckModalProps = {
+  firstName: string
+  lastName: string
+  onFirstNameChange: (e: ChangeEvent<HTMLInputElement>) => void
+  onLastNameChange: (e: ChangeEvent<HTMLInputElement>) => void
+  onCapture: (b64: string) => void
+  onSkip: () => void
+}
+
+const IdentityCheckModal = memo(function IdentityCheckModal({
+  firstName,
+  lastName,
+  onFirstNameChange,
+  onLastNameChange,
+  onCapture,
+  onSkip,
+}: IdentityCheckModalProps) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div className="card" style={{ width: '100%', maxWidth: 480 }}>
+        <div className="badge badge-cyan" style={{ margin: '0 auto 14px' }}>Identity Check</div>
+        <h2 style={{ textAlign: 'center', marginBottom: 8 }}>Quick selfie required</h2>
+        <p style={{ textAlign: 'center', color: 'var(--grey)', fontSize: 13, marginBottom: 16 }}>
+          Please take a selfie to continue the exam.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>First Name</label>
+            <input value={firstName} onChange={onFirstNameChange} placeholder="Jane" />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>Last Name</label>
+            <input value={lastName} onChange={onLastNameChange} placeholder="Doe" />
+          </div>
+        </div>
+        <SelfieCapture onCapture={onCapture} />
+        <button className="btn btn-outline" style={{ marginTop: 12 }} onClick={onSkip}>
+          Skip (counts as failure)
+        </button>
+      </div>
+    </div>
+  )
+})
 
 export function ExamSession() {
   const nav = useNavigate()
@@ -93,11 +137,27 @@ export function ExamSession() {
     behavioralCtrlRef.current = ctrl
   }, [])
 
+  const handleIdentityFirstNameChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    setIdentity(v => ({ ...v, firstName: e.target.value }))
+  }, [])
+
+  const handleIdentityLastNameChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    setIdentity(v => ({ ...v, lastName: e.target.value }))
+  }, [])
+
+  const handleSkipModalCheck = useCallback(() => {
+    setFailures(f => f + 1)
+    nextCheckAtRef.current = performance.now() + 60_000
+    setStep('active')
+  }, [])
+
   // tick clock
   useEffect(() => {
+    if (step === 'modal-check') return
+
     const t = window.setInterval(() => setNow(performance.now()), 250)
     return () => window.clearInterval(t)
-  }, [])
+  }, [step])
 
   // suspicious monitoring
   useEffect(() => {
@@ -302,29 +362,14 @@ export function ExamSession() {
         </div>
 
         {step === 'modal-check' && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-            <div className="card" style={{ width: '100%', maxWidth: 480 }}>
-              <div className="badge badge-cyan" style={{ margin: '0 auto 14px' }}>Identity Check</div>
-              <h2 style={{ textAlign: 'center', marginBottom: 8 }}>Quick selfie required</h2>
-              <p style={{ textAlign: 'center', color: 'var(--grey)', fontSize: 13, marginBottom: 16 }}>
-                Please take a selfie to continue the exam.
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
-                <div className="field" style={{ marginBottom: 0 }}>
-                  <label>First Name</label>
-                  <input value={identity.firstName} onChange={e => setIdentity(v => ({ ...v, firstName: e.target.value }))} placeholder="Jane" />
-                </div>
-                <div className="field" style={{ marginBottom: 0 }}>
-                  <label>Last Name</label>
-                  <input value={identity.lastName} onChange={e => setIdentity(v => ({ ...v, lastName: e.target.value }))} placeholder="Doe" />
-                </div>
-              </div>
-              <SelfieCapture onCapture={handleCheckSelfie} />
-              <button className="btn btn-outline" style={{ marginTop: 12 }} onClick={() => { setFailures(f => f + 1); nextCheckAtRef.current = performance.now() + 60_000; setStep('active') }}>
-                Skip (counts as failure)
-              </button>
-            </div>
-          </div>
+          <IdentityCheckModal
+            firstName={identity.firstName}
+            lastName={identity.lastName}
+            onFirstNameChange={handleIdentityFirstNameChange}
+            onLastNameChange={handleIdentityLastNameChange}
+            onCapture={handleCheckSelfie}
+            onSkip={handleSkipModalCheck}
+          />
         )}
 
         {step === 'suspended' && (
