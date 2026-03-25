@@ -7,6 +7,7 @@ import type { BehavioralController, BehavioralProfile } from '../hooks/useBehavi
 import { openPrintableReport } from '../services/reportGenerator'
 import { sendSessionCheckpoint } from '../services/sessionApi'
 import { useEdguardStore } from '../store/edguardStore'
+import { behavioralCollector, cognitiveCollector, faceCollector } from '../signal-engine'
 
 type EventType = 'VERIFIED' | 'WARNING' | 'PRESENT' | 'SUSPICIOUS'
 
@@ -85,6 +86,14 @@ const IdentityCheckModal = memo(function IdentityCheckModal({
 export function ExamSession() {
   const nav = useNavigate()
   const { worker } = useEdguardStore()
+
+  useEffect(() => {
+    behavioralCollector.start()
+
+    return () => {
+      behavioralCollector.stop()
+    }
+  }, [])
 
   const [step, setStep] = useState<Step>('active')
   const [startedAt] = useState(() => performance.now())
@@ -250,10 +259,21 @@ export function ExamSession() {
   }, [addEvent])
 
   async function handleCheckSelfie(b64: string) {
+    faceCollector.capture(b64)
     setChecksTotal(n => n + 1)
+    const startedAt = performance.now()
+
     try {
       const res = await verifyWorker({ selfie_b64: b64, first_name: identity.firstName, last_name: identity.lastName })
       const sim = Math.round(res.similarity)
+      const durationMs = Math.round(performance.now() - startedAt)
+
+      cognitiveCollector.record({
+        testId: 'exam',
+        score: sim,
+        durationMs,
+      })
+
       setLastSimilarity(sim)
 
       if (res.verified) {

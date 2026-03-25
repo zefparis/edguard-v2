@@ -1,14 +1,24 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SelfieCapture } from '../components/SelfieCapture'
 import { verifyWorker } from '../services/api'
 import { useEdguardStore } from '../store/edguardStore'
+import { behavioralCollector, cognitiveCollector, faceCollector } from '../signal-engine'
 
 type Step = 'identity' | 'selfie' | 'verifying' | 'success' | 'failed'
 
 export function Verify() {
   const nav = useNavigate()
   const { worker, setWorker } = useEdguardStore()
+
+  useEffect(() => {
+    behavioralCollector.start()
+
+    return () => {
+      behavioralCollector.stop()
+    }
+  }, [])
+
   const [step, setStep] = useState<Step>('identity')
   const [firstName, setFirstName] = useState(worker?.firstName ?? '')
   const [lastName, setLastName] = useState(worker?.lastName ?? '')
@@ -52,11 +62,23 @@ export function Verify() {
   }
 
   async function handleSelfie(b64: string) {
+    faceCollector.capture(b64)
     setStep('verifying')
+    const startedAt = performance.now()
+
     try {
       const res = await verifyWorker({ selfie_b64: b64, first_name: firstName, last_name: lastName })
+      const score = Math.round(res.similarity)
+      const durationMs = Math.round(performance.now() - startedAt)
+
+      cognitiveCollector.record({
+        testId: 'verify',
+        score,
+        durationMs,
+      })
+
       if (res.verified) {
-        setResult({ similarity: Math.round(res.similarity), firstName: res.first_name })
+        setResult({ similarity: score, firstName: res.first_name })
 
         // Hydrate store with verified student_id (used by /session checkpoints + report)
         setWorker({
@@ -74,7 +96,7 @@ export function Verify() {
         setStep('success')
         setTimeout(() => nav('/session'), 600)
       } else {
-        setResult({ similarity: Math.round(res.similarity), firstName })
+        setResult({ similarity: score, firstName })
         setStep('failed')
       }
     } catch (err) {
