@@ -2,45 +2,111 @@ import { useNavigate } from 'react-router-dom'
 
 export function Home() {
   const nav = useNavigate()
+
+  const stats = [
+    { value: '2 entry flows', label: 'Enroll or verify' },
+    { value: 'Live', label: 'Selfie-led access checks' },
+    { value: '6 layers', label: 'Identity + cognitive stack' },
+    { value: 'Secure', label: 'Post-quantum signed output' },
+  ]
+
+  const sideCards = [
+    {
+      title: 'Enrollment baseline',
+      body: 'Create the academic identity profile with student details, facial reference, cognitive baseline, vocal imprint, and behavioral capture.',
+    },
+    {
+      title: 'Exam entry',
+      body: 'Run a quick verification before session access so the learner enters the exam with a trusted live identity check.',
+    },
+    {
+      title: 'Continuous trust',
+      body: 'After verification, the exam session keeps monitoring trust through periodic identity and behavior checkpoints.',
+    },
+  ]
+
   return (
-    <div className="page">
-      <div className="logo">⬡ EDGUARD</div>
-      <h1 className="step-title" style={{ fontSize: 30, marginBottom: 8 }}>Academic Identity Shield</h1>
-      <p className="step-sub">
-        Biometric verification for online exams.<br />
-        Powered by Hybrid Vector — 3 French patents.
-      </p>
+    <div className="app-shell">
+      <div className="shell-inner">
+        <div className="hero-panel">
+          <div className="eyebrow">Academic identity protection</div>
 
-      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
-        <div className="card" style={{ cursor: 'pointer' }} onClick={() => nav('/enroll')}>
-          <div className="badge badge-cyan">First time?</div>
-          <h2 style={{ fontSize: 18, marginBottom: 6 }}>Register</h2>
-          <p style={{ fontSize: 13, color: 'var(--grey)', lineHeight: 1.6 }}>
-            Identity + facial + cognitive + vocal baseline.<br />
-            Behavioral capture + post-quantum signature.
+          <div className="hero-mark">
+            <svg width="42" height="42" viewBox="0 0 28 28" aria-hidden="true">
+              <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="14" cy="14" r="4" fill="currentColor" opacity="0.38" />
+            </svg>
+            <span>EDGUARD</span>
+          </div>
+
+          <h1 className="headline-xl">
+            Protect exam identity
+            <br />
+            <span>from entry to session.</span>
+          </h1>
+
+          <p className="hero-copy">
+            EdGuard secures online exams with identity enrollment, live verification, cognitive baselines, behavioral telemetry, and post-quantum signed trust signals.
           </p>
-          <button className="btn btn-primary" style={{ marginTop: 20 }}>
-            First time? Register →
-          </button>
+
+          <div className="stats-grid">
+            {stats.map((item) => (
+              <div key={item.label} className="stat-card">
+                <div className="stat-value">{item.value}</div>
+                <div className="stat-label">{item.label}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="card" style={{ cursor: 'pointer' }} onClick={() => nav('/verify')}>
-          <div className="badge badge-green">Exam</div>
-          <h2 style={{ fontSize: 18, marginBottom: 6 }}>Start Exam</h2>
-          <p style={{ fontSize: 13, color: 'var(--grey)', lineHeight: 1.6 }}>
-            Already registered? Verify with a selfie.<br />
-            Start a continuous exam session.
-          </p>
-          <button className="btn btn-success" style={{ marginTop: 20 }}>
-            Already registered? Start Exam →
-          </button>
-        </div>
-      </div>
+        <div className="content-grid">
+          <div className="surface-card">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+              <div>
+                <div className="info-kicker">Main flows</div>
+                <div style={{ marginTop: 6, fontSize: '1.5rem', fontWeight: 800, lineHeight: 1.1 }}>Choose how the learner enters EdGuard</div>
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--grey)' }}>
+                Real module
+              </div>
+            </div>
 
-      <div style={{ marginTop: 40, display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {['Facial + Cognitive + Vocal', 'Post-Quantum FIPS 203', '3 French Patents'].map(t => (
-          <span key={t} className="badge badge-cyan">{t}</span>
-        ))}
+            <div className="section-rule" />
+
+            <div style={{ display: 'grid', gap: 16 }}>
+              <div className="card" style={{ background: 'rgba(3,7,18,0.52)', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }} onClick={() => nav('/enroll')}>
+                <div className="badge badge-cyan">First time</div>
+                <h2 style={{ fontSize: 22, marginBottom: 8 }}>Enroll a student profile</h2>
+                <p style={{ fontSize: 14, color: 'var(--grey)', lineHeight: 1.7 }}>
+                  Capture identity details, face reference, vocal imprint, reflex checks, and behavioral signals before the exam day.
+                </p>
+                <button className="btn btn-primary" style={{ marginTop: 20 }}>
+                  Start enrollment →
+                </button>
+              </div>
+
+              <div className="card" style={{ background: 'rgba(3,7,18,0.52)', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }} onClick={() => nav('/verify')}>
+                <div className="badge badge-green">Exam access</div>
+                <h2 style={{ fontSize: 22, marginBottom: 8 }}>Verify before session</h2>
+                <p style={{ fontSize: 14, color: 'var(--grey)', lineHeight: 1.7 }}>
+                  Ask the learner for a live selfie and confirm the enrolled identity before opening the monitored exam session.
+                </p>
+                <button className="btn btn-success" style={{ marginTop: 20 }}>
+                  Start verification →
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="side-stack">
+            {sideCards.map((card) => (
+              <div key={card.title} className="info-card">
+                <div className="info-kicker">{card.title}</div>
+                <div className="info-body">{card.body}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )

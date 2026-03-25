@@ -56,14 +56,14 @@ const IdentityCheckModal = memo(function IdentityCheckModal({
   onSkip,
 }: IdentityCheckModalProps) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div className="card" style={{ width: '100%', maxWidth: 480 }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.78)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 50 }}>
+      <div className="surface-card" style={{ width: '100%', maxWidth: 560 }}>
         <div className="badge badge-cyan" style={{ margin: '0 auto 14px' }}>Identity Check</div>
         <h2 style={{ textAlign: 'center', marginBottom: 8 }}>Quick selfie required</h2>
-        <p style={{ textAlign: 'center', color: 'var(--grey)', fontSize: 13, marginBottom: 16 }}>
+        <p style={{ textAlign: 'center', color: 'var(--grey)', fontSize: 13, marginBottom: 16, lineHeight: 1.7 }}>
           Please take a selfie to continue the exam.
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 14 }}>
           <div className="field" style={{ marginBottom: 0 }}>
             <label>First Name</label>
             <input value={firstName} onChange={onFirstNameChange} placeholder="Jane" />
@@ -128,6 +128,28 @@ export function ExamSession() {
   const behavioralLevel = useMemo<'normal' | 'suspicious'>(() => {
     return behavioralScore >= 0.7 ? 'normal' : 'suspicious'
   }, [behavioralScore])
+
+  const summaryCards = [
+    { value: formatElapsed(elapsedMs), label: 'Elapsed' },
+    { value: formatCountdown(nextCheckInMs), label: 'Next check' },
+    { value: `${checksPassed}/${checksTotal}`, label: 'Checks passed' },
+    { value: `${Math.round(behavioralScore * 100)}%`, label: 'Behavioral score' },
+  ]
+
+  const sideCards = [
+    {
+      title: 'Continuous supervision',
+      body: 'EdGuard pauses the session at intervals to request a fresh selfie and confirm the active learner remains present.',
+    },
+    {
+      title: 'Behavioral telemetry',
+      body: 'Focus changes, visibility loss, and suspicious shortcuts contribute to the behavioral trust score during the session.',
+    },
+    {
+      title: 'Session evidence',
+      body: 'Every checkpoint can be reported with timing, result, and final printable output for review or escalation.',
+    },
+  ]
 
   const addEvent = useCallback((e: Omit<SessionEvent, 'at'>) => {
     setEvents(prev => [{ ...e, at: Date.now() }, ...prev].slice(0, 5))
@@ -303,62 +325,126 @@ export function ExamSession() {
 
   return (
     <BehavioralCapture onController={onBehavioralController}>
-      <div className="page">
-        <div className="logo" style={{ cursor: 'pointer' }} onClick={() => nav('/')}>← EDGUARD</div>
+      <div className="app-shell">
+        <div className="shell-inner">
+          <div className="hero-panel">
+            <div className="eyebrow">Protected exam session</div>
 
-        <div className="badge badge-cyan" style={{ margin: '0 auto 12px' }}>Exam Session Active</div>
-        <h1 className="step-title">{formatElapsed(elapsedMs)}</h1>
-        <p className="step-sub" style={{ marginBottom: 16 }}>Next check in: {formatCountdown(nextCheckInMs)}</p>
+            <div className="hero-mark">
+              <svg width="42" height="42" viewBox="0 0 28 28" aria-hidden="true">
+                <polygon points="14,2 26,8 26,20 14,26 2,20 2,8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                <circle cx="14" cy="14" r="4" fill="currentColor" opacity="0.38" />
+              </svg>
+              <span>EDGUARD SESSION</span>
+            </div>
 
-        <div className="card" style={{ width: '100%', padding: 16, marginTop: 0 }}>
-          <div className="metric-row">
-            <span className="metric-label">Status</span>
-            <span className="metric-value" style={{ color: statusOk ? 'var(--green)' : 'var(--red)' }}>
-              {statusOk ? 'VERIFIED' : 'CHECK REQUIRED'}
-            </span>
-          </div>
-          <div className="metric-row">
-            <span className="metric-label">Failures</span>
-            <span className="metric-value" style={{ color: failures > 0 ? 'var(--amber)' : 'var(--green)' }}>{failures}/{MAX_FAILURES}</span>
-          </div>
-          <div className="metric-row">
-            <span className="metric-label">Last similarity</span>
-            <span className="metric-value">{lastSimilarity !== null ? `${lastSimilarity}%` : '—'}</span>
-          </div>
-          <div className="metric-row">
-            <span className="metric-label">Behavioral</span>
-            <span className="metric-value">{behavioralLevel} ({Math.round(behavioralScore * 100)}%)</span>
-          </div>
-        </div>
+            <h1 className="headline-xl">
+              Monitor presence
+              <br />
+              <span>through the full exam.</span>
+            </h1>
 
-        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={handlePresence}>
-          I'm here
-        </button>
+            <p className="hero-copy">
+              The active session tracks elapsed time, behavioral trust, and periodic selfie checkpoints so the exam remains bound to the verified learner.
+            </p>
 
-        <div className="card" style={{ width: '100%', marginTop: 16, padding: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--grey)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session log</div>
-          {events.length === 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--grey)' }}>No events yet.</div>
-          ) : (
-            events.map((e, idx) => (
-              <div key={idx} style={{ padding: '8px 0', borderBottom: idx === events.length - 1 ? 'none' : '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <div style={{ fontWeight: 700, color: e.type === 'VERIFIED' ? 'var(--green)' : e.type === 'WARNING' ? 'var(--amber)' : e.type === 'SUSPICIOUS' ? 'var(--red)' : 'var(--accent)' }}>
-                    {e.type}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--grey)' }}>{new Date(e.at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}</div>
+            <div className="stats-grid">
+              {summaryCards.map((item) => (
+                <div key={item.label} className="stat-card">
+                  <div className="stat-value">{item.value}</div>
+                  <div className="stat-label">{item.label}</div>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--grey)', marginTop: 2 }}>
-                  {e.message}{typeof e.similarity === 'number' ? ` — ${e.similarity}%` : ''}
+              ))}
+            </div>
+          </div>
+
+          <div className="content-grid">
+            <div className="surface-card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                <div>
+                  <div className="info-kicker">Session control</div>
+                  <div style={{ marginTop: 6, fontSize: '1.5rem', fontWeight: 800, lineHeight: 1.1 }}>
+                    {step === 'suspended' ? 'Session suspended' : step === 'modal-check' ? 'Identity checkpoint in progress' : 'Exam actively monitored'}
+                  </div>
+                </div>
+                <div className={statusOk ? 'badge badge-green' : 'badge'} style={!statusOk ? { background:'rgba(239,68,68,0.12)', color:'var(--red)', border:'1px solid rgba(239,68,68,0.25)' } : undefined}>
+                  {statusOk ? 'Verified' : 'Check required'}
                 </div>
               </div>
-            ))
-          )}
-        </div>
 
-        <div style={{ display: 'flex', gap: 12, width: '100%', marginTop: 16 }}>
-          <button className="btn btn-outline" onClick={endSession}>End Session</button>
-          <button className="btn btn-outline" onClick={() => nav('/')}>Exit</button>
+              <div className="section-rule" />
+
+              <div className="card" style={{ width: '100%', padding: 16, marginTop: 0, background: 'rgba(3,7,18,0.52)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="metric-row">
+                  <span className="metric-label">Status</span>
+                  <span className="metric-value" style={{ color: statusOk ? 'var(--green)' : 'var(--red)' }}>
+                    {statusOk ? 'VERIFIED' : 'CHECK REQUIRED'}
+                  </span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label">Failures</span>
+                  <span className="metric-value" style={{ color: failures > 0 ? 'var(--amber)' : 'var(--green)' }}>{failures}/{MAX_FAILURES}</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label">Last similarity</span>
+                  <span className="metric-value">{lastSimilarity !== null ? `${lastSimilarity}%` : '—'}</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label">Behavioral</span>
+                  <span className="metric-value">{behavioralLevel} ({Math.round(behavioralScore * 100)}%)</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 16 }}>
+                <button className="btn btn-primary" onClick={handlePresence}>
+                  I'm here
+                </button>
+                <button className="btn btn-outline" onClick={endSession}>End Session</button>
+                <button className="btn btn-outline" onClick={() => nav('/')}>Exit</button>
+              </div>
+
+              <div className="card" style={{ width: '100%', marginTop: 16, padding: 16, background: 'rgba(3,7,18,0.52)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div style={{ fontSize: 12, color: 'var(--grey)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session log</div>
+                {events.length === 0 ? (
+                  <div style={{ fontSize: 13, color: 'var(--grey)' }}>No events yet.</div>
+                ) : (
+                  events.map((e, idx) => (
+                    <div key={idx} style={{ padding: '10px 0', borderBottom: idx === events.length - 1 ? 'none' : '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 700, color: e.type === 'VERIFIED' ? 'var(--green)' : e.type === 'WARNING' ? 'var(--amber)' : e.type === 'SUSPICIOUS' ? 'var(--red)' : 'var(--accent)' }}>
+                          {e.type}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--grey)' }}>{new Date(e.at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}</div>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--grey)', marginTop: 4, lineHeight: 1.6 }}>
+                        {e.message}{typeof e.similarity === 'number' ? ` — ${e.similarity}%` : ''}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="side-stack">
+              {sideCards.map((card) => (
+                <div key={card.title} className="info-card">
+                  <div className="info-kicker">{card.title}</div>
+                  <div className="info-body">{card.body}</div>
+                </div>
+              ))}
+
+              <div className="info-card">
+                <div className="info-kicker">Current learner</div>
+                <div className="info-body">
+                  {identity.firstName || 'Unknown'} {identity.lastName || ''}
+                  <br />
+                  Student ID: {worker?.workerId ?? 'unknown'}
+                  <br />
+                  Institution: {worker?.employerSite ?? 'unknown'}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {step === 'modal-check' && (
@@ -373,14 +459,14 @@ export function ExamSession() {
         )}
 
         {step === 'suspended' && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-            <div className="card" style={{ width: '100%', maxWidth: 480, textAlign: 'center' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.82)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 60 }}>
+            <div className="surface-card" style={{ width: '100%', maxWidth: 520, textAlign: 'center' }}>
               <div className="badge" style={{ margin: '0 auto 14px', background:'rgba(239,68,68,0.12)', color:'var(--red)', border:'1px solid rgba(239,68,68,0.25)' }}>
                 Session Suspended
               </div>
               <h2 style={{ marginBottom: 8 }}>Verification failed</h2>
-              <p style={{ color: 'var(--grey)', fontSize: 13 }}>Please contact the proctor. This session is suspended.</p>
-              <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+              <p style={{ color: 'var(--grey)', fontSize: 13, lineHeight: 1.7 }}>Please contact the proctor. This session is suspended.</p>
+              <div style={{ display: 'grid', gap: 12, marginTop: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                 <button className="btn btn-outline" onClick={endSession}>Download Report</button>
                 <button className="btn btn-outline" onClick={() => nav('/')}>Exit</button>
               </div>
