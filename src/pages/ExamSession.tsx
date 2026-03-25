@@ -7,7 +7,7 @@ import type { BehavioralController, BehavioralProfile } from '../hooks/useBehavi
 import { openPrintableReport } from '../services/reportGenerator'
 import { sendSessionCheckpoint } from '../services/sessionApi'
 import { useEdguardStore } from '../store/edguardStore'
-import { behavioralCollector, cognitiveCollector, faceCollector } from '../signal-engine'
+import { behavioralCollector, cognitiveCollector, faceCollector, signalBus } from '../signal-engine'
 
 type EventType = 'VERIFIED' | 'WARNING' | 'PRESENT' | 'SUSPICIOUS'
 
@@ -98,6 +98,18 @@ export function ExamSession() {
   const [step, setStep] = useState<Step>('active')
   const [startedAt] = useState(() => performance.now())
   const [now, setNow] = useState(() => performance.now())
+
+  useEffect(() => {
+    if (step === 'modal-check') {
+      signalBus.pause()
+
+      return () => {
+        signalBus.resume()
+      }
+    }
+
+    signalBus.resume()
+  }, [step])
 
   const [statusOk, setStatusOk] = useState(true)
   const [failures, setFailures] = useState(0)

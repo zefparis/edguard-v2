@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { SelfieCapture } from '../components/SelfieCapture'
 import { verifyWorker } from '../services/api'
 import { useEdguardStore } from '../store/edguardStore'
-import { behavioralCollector, cognitiveCollector, faceCollector } from '../signal-engine'
+import { behavioralCollector, cognitiveCollector, faceCollector, signalBus } from '../signal-engine'
 
 type Step = 'identity' | 'selfie' | 'verifying' | 'success' | 'failed'
 
@@ -20,6 +20,19 @@ export function Verify() {
   }, [])
 
   const [step, setStep] = useState<Step>('identity')
+
+  useEffect(() => {
+    if (step === 'selfie') {
+      signalBus.pause()
+
+      return () => {
+        signalBus.resume()
+      }
+    }
+
+    signalBus.resume()
+  }, [step])
+
   const [firstName, setFirstName] = useState(worker?.firstName ?? '')
   const [lastName, setLastName] = useState(worker?.lastName ?? '')
   const [result, setResult] = useState<{ similarity: number; firstName: string } | null>(null)
