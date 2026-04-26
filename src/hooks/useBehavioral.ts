@@ -36,6 +36,10 @@ export type BehavioralProfile = {
     gyro_std?: number
     /** Std deviation of |accelerationIncludingGravity| over the session (m/s²). */
     accel_variation?: number
+    /** Mean |rotationRate| within ±100 ms of every tap (rad/s).
+     *  Strong human cue — hand always trembles slightly when finger lands;
+     *  emulators / synthetic taps yield ~0. */
+    gyro_during_tap?: number
   }
   orientation: {
     samples: number
@@ -53,10 +57,18 @@ export type BehavioralProfile = {
     /** Coefficient of variation (std/mean) of inter-tap intervals.
      *  Humans ≈ 0.15+ ; bots ≈ 0 (perfectly regular). */
     tap_cv?: number
+    /** 1 - tap_cv — high regularity is suspicious (bot signal). Provided
+     *  raw for downstream scoring policies; not used by the default scorer. */
+    inter_tap_regularity?: number
     /** Variance of PointerEvent.pressure values across pointerdown events. */
     pressure_variance?: number
     pressure_samples?: number[]
     tap_intervals_ms?: number[]
+    /** Per-tap straight-line velocity (px/ms) = |up - down| / duration. */
+    tap_velocity_mean?: number
+    /** Std/mean of tap velocities. Humans vary, bots don't. */
+    tap_velocity_cv?: number
+    tap_velocities?: number[]
   }
 }
 
@@ -216,17 +228,33 @@ export function useBehavioral(): BehavioralController {
     movePathSum: 0,
     movePathN: 0,
 
-    active: new Map<number, { x: number; y: number; t: number; path: number }>(),
+    active: new Map<number, {
+      x: number
+      y: number
+      t: number
+      path: number
+      downX: number
+      downY: number
+      downT: number
+    }>(),
     lastTapUpTs: null as number | null,
 
     // New — raw signals for behavioral scoring.
     pressureSamples: [] as number[],
     tapIntervalsMs: [] as number[],
+    tapVelocities: [] as number[],
+    tapTimes: [] as number[],
   })
 
   // Ring buffer of the last 10 |rotationRate| magnitudes for gyro_std.
   const gyroMagsRef = useRef<number[]>([])
   const GYRO_WINDOW = 10
+
+  // Timestamped gyro magnitudes for tap-windowed analysis (gyro_during_tap).
+  // We cap the buffer to avoid unbounded growth on long sessions.
+  const gyroTimedRef = useRef<{ t: number; mag: number }[]>([])
+  const GYRO_TIMED_CAP = 3000
+  const TAP_GYRO_WINDOW_MS = 100
 
   const permissionsRef = useRef<BehavioralProfile['permissions']>({
     motion: 'unsupported',
@@ -311,6 +339,52 @@ export function useBehavioral(): BehavioralController {
     const accelStats = finalizeRunningVec(motionVecRef.current)
     const accelVariation = motionSamples >= 2 ? accelStats.mag_std : undefined
 
+    // tap_velocity_mean / tap_velocity_cv
+    let tapVelocityMean: number | undefined
+    let tapVelocityCv: number | undefined
+    if (t.tapVelocities.length >= 1) {
+      let sum = 0
+      for (let i = 0; i < t.tapVelocities.length; i += 1) sum += t.tapVelocities[i]
+      tapVelocityMean = sum / t.tapVelocities.length
+      if (t.tapVelocities.length >= 2 && tapVelocityMean > 0) {
+        let sq = 0
+        for (let i = 0; i < t.tapVelocities.length; i += 1) {
+          const d = t.tapVelocities[i] - tapVelocityMean
+          sq += d * d
+        }
+        const std = Math.sqrt(sq / Math.max(1, t.tapVelocities.length - 1))
+        tapVelocityCv = std / tapVelocityMean
+      }
+    }
+
+    // gyro_during_tap — for every tap time, mean |rotationRate| in the
+    // ±100 ms window from the timestamped gyro buffer.
+    let gyroDuringTap: number | undefined
+    if (t.tapTimes.length > 0 && gyroTimedRef.current.length > 0) {
+      const samples = gyroTimedRef.current
+      const perTapMeans: number[] = []
+      for (let i = 0; i < t.tapTimes.length; i += 1) {
+        const tapT = t.tapTimes[i]
+        let sum = 0
+        let n = 0
+        for (let j = 0; j < samples.length; j += 1) {
+          const dt = samples[j].t - tapT
+          if (dt < -TAP_GYRO_WINDOW_MS) continue
+          if (dt > TAP_GYRO_WINDOW_MS) break
+          sum += samples[j].mag
+          n += 1
+        }
+        if (n > 0) perTapMeans.push(sum / n)
+      }
+      if (perTapMeans.length > 0) {
+        let s = 0
+        for (let i = 0; i < perTapMeans.length; i += 1) s += perTapMeans[i]
+        gyroDuringTap = s / perTapMeans.length
+      }
+    }
+
+    const interTapRegularity = tapCv !== undefined ? Math.max(0, 1 - tapCv) : undefined
+
     const profile: BehavioralProfile = {
       device: {
         device_type: inferDeviceType(),
@@ -339,6 +413,7 @@ export function useBehavioral(): BehavioralController {
         rotation_rate: finalizeRunningVec(gyroVecRef.current),
         gyro_std: gyroStd,
         accel_variation: accelVariation,
+        gyro_during_tap: gyroDuringTap,
       },
       orientation: {
         samples: orientSamples,
@@ -354,9 +429,13 @@ export function useBehavioral(): BehavioralController {
         move_speed_px_per_ms_mean: moveSpeedMean,
         move_path_len_px_mean: movePathMean,
         tap_cv: tapCv,
+        inter_tap_regularity: interTapRegularity,
         pressure_variance: pressureVariance,
         pressure_samples: t.pressureSamples.slice(),
         tap_intervals_ms: t.tapIntervalsMs.slice(),
+        tap_velocity_mean: tapVelocityMean,
+        tap_velocity_cv: tapVelocityCv,
+        tap_velocities: t.tapVelocities.slice(),
       },
     }
 
@@ -393,7 +472,10 @@ export function useBehavioral(): BehavioralController {
     touchRef.current.lastTapUpTs = null
     touchRef.current.pressureSamples = []
     touchRef.current.tapIntervalsMs = []
+    touchRef.current.tapVelocities = []
+    touchRef.current.tapTimes = []
     gyroMagsRef.current = []
+    gyroTimedRef.current = []
 
     setIsCapturing(true)
 
@@ -416,11 +498,15 @@ export function useBehavioral(): BehavioralController {
         const rb = r.beta ?? 0
         const rg = r.gamma ?? 0
         updateRunningVec(gyroVecRef.current, ra, rb, rg)
-        // Push |rotationRate| into the ring buffer (last GYRO_WINDOW samples).
+        // Push |rotationRate| into the short ring buffer (last GYRO_WINDOW samples).
         const mag = Math.sqrt(ra * ra + rb * rb + rg * rg)
         const buf = gyroMagsRef.current
         buf.push(mag)
         if (buf.length > GYRO_WINDOW) buf.shift()
+        // Timestamped buffer for tap-windowed analysis.
+        const timed = gyroTimedRef.current
+        timed.push({ t: performance.now(), mag })
+        if (timed.length > GYRO_TIMED_CAP) timed.shift()
       }
 
       const now = performance.now()
@@ -437,7 +523,16 @@ export function useBehavioral(): BehavioralController {
     const onPointerDown = (e: PointerEvent) => {
       const t = touchRef.current
       t.pointerDown += 1
-      t.active.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), path: 0 })
+      const downT = performance.now()
+      t.active.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        t: downT,
+        path: 0,
+        downX: e.clientX,
+        downY: e.clientY,
+        downT,
+      })
 
       // Pressure: meaningful only for touch/stylus inputs; mouse reports 0/0.5.
       // We accept any non-default value (PointerEvent default is 0 for no-button
@@ -490,6 +585,16 @@ export function useBehavioral(): BehavioralController {
           t.tapIntervalsMs.push(interval)
         }
         t.lastTapUpTs = now
+
+        // Straight-line tap velocity: |up - down| / total duration (px/ms).
+        const dx = e.clientX - cur.downX
+        const dy = e.clientY - cur.downY
+        const straight = Math.sqrt(dx * dx + dy * dy)
+        const tapDur = Math.max(1, now - cur.downT)
+        t.tapVelocities.push(straight / tapDur)
+
+        // Record tap timestamp for gyro-during-tap window matching at stop().
+        t.tapTimes.push(now)
       }
 
       t.movePathSum += cur.path

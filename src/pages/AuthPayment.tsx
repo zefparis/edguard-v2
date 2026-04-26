@@ -53,6 +53,17 @@ function behavioralScoreFromProfile(p: BehavioralProfile): number {
     scores.push(Math.min(1, p.touch.pressure_variance * 10))
   }
 
+  // Strong human cue: hand micro-tremor inside the ±100ms window of every tap.
+  // Synthetic / emulator taps fire with the device perfectly still → ~0.
+  if (p.motion.gyro_during_tap !== undefined) {
+    scores.push(Math.min(1, p.motion.gyro_during_tap * 15))
+  }
+
+  // Variable tap velocity is a human signature; bots tap with constant speed.
+  if (p.touch.tap_velocity_cv !== undefined) {
+    scores.push(Math.min(1, p.touch.tap_velocity_cv * 5))
+  }
+
   if (scores.length === 0) {
     return p.device.touch_capable ? 0.4 : 0.2
   }
