@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { SelfieCapture } from '../components/SelfieCapture'
 import { ReactionTime } from '../components/ReactionTime'
-import { sendAuthPaymentSignals, verifyWorker, vocalVerify } from '../services/api'
+import {
+  lookupEnrollment,
+  sendAuthPaymentSignals,
+  verifyWorker,
+  vocalVerify,
+} from '../services/api'
 import { useVoiceBiometrics } from '../hooks/useVoiceBiometrics'
 import {
   useBehavioral,
@@ -14,7 +20,7 @@ const PAYMENT_THRESHOLD = Number(import.meta.env.VITE_PAYMENT_THRESHOLD ?? 0.75)
 const REVIEW_THRESHOLD = 0.6
 const MAX_ATTEMPTS = 3
 
-type Step = 'identity' | 'selfie' | 'vocal' | 'reaction' | 'computing' | 'decision'
+type Step = 'identity' | 'not-enrolled' | 'selfie' | 'vocal' | 'reaction' | 'computing' | 'decision'
 type Decision = 'APPROVED' | 'REVIEW' | 'REJECTED' | 'MANUAL_REVIEW'
 
 const VOCAL_RECORD_MS = 3000
@@ -104,6 +110,7 @@ const TONE: Record<Decision, { color: string; bg: string; border: string; glyph:
 }
 
 export function AuthPayment() {
+  const nav = useNavigate()
   const [step, setStep] = useState<Step>('identity')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -115,6 +122,7 @@ export function AuthPayment() {
   const [studentId, setStudentId] = useState<string | null>(null)
   const [vocalQuality, setVocalQuality] = useState<number | null>(null)
   const [vocalError, setVocalError] = useState<string>('')
+  const [lookupBusy, setLookupBusy] = useState(false)
 
   const voice = useVoiceBiometrics()
   const behavioral = useBehavioral()
@@ -140,14 +148,41 @@ export function AuthPayment() {
   const handleIdentity = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
     if (!firstName.trim() || !lastName.trim()) return
+    if (lookupBusy) return
+
     // First user gesture of the flow — request iOS motion permission here so
     // that the prompt actually appears (it cannot be requested from useEffect).
     // We don't gate progression on the result: behavioral scoring degrades
     // gracefully when motion is denied (the score uses pressure / tap_cv too).
     try { await requestMotionPermission() } catch { /* user denied or unsupported */ }
+
+    // Block the flow if no enrollment exists for this (first, last). Without
+    // an enrolled face/voice profile every downstream score would be 0 and
+    // the user would always be REJECTED — that's a confusing dead-end.
+    setLookupBusy(true)
+    setErrorMsg('')
+    try {
+      const lookup = await lookupEnrollment({
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+      })
+      if (!lookup.found) {
+        setStep('not-enrolled')
+        return
+      }
+    } catch (err) {
+      // On lookup failure we surface an error and stay on the identity step
+      // — we do NOT silently proceed because that would degrade to a fake
+      // verification with all-zero scores.
+      setErrorMsg(err instanceof Error ? err.message : 'Profile lookup failed')
+      return
+    } finally {
+      setLookupBusy(false)
+    }
+
     void behavioral.start()
     setStep('selfie')
-  }, [firstName, lastName, behavioral])
+  }, [firstName, lastName, behavioral, lookupBusy])
 
   const handleSelfie = useCallback(async (b64: string) => {
     setSelfie(b64)
@@ -272,12 +307,13 @@ export function AuthPayment() {
 
   const progressPct = useMemo(() => {
     switch (step) {
-      case 'identity':  return 0
-      case 'selfie':    return 20
-      case 'vocal':     return 45
-      case 'reaction':  return 70
-      case 'computing': return 90
-      case 'decision':  return 100
+      case 'identity':     return 0
+      case 'not-enrolled': return 0
+      case 'selfie':       return 20
+      case 'vocal':        return 45
+      case 'reaction':     return 70
+      case 'computing':    return 90
+      case 'decision':     return 100
     }
   }, [step])
 
@@ -343,10 +379,40 @@ export function AuthPayment() {
                 autoComplete="family-name"
               />
               <button className="btn btn-primary" type="submit"
-                disabled={!firstName.trim() || !lastName.trim()}>
-                Continue →
+                disabled={!firstName.trim() || !lastName.trim() || lookupBusy}>
+                {lookupBusy ? 'Looking up…' : 'Continue →'}
               </button>
             </form>
+          )}
+
+          {step === 'not-enrolled' && (
+            <div style={{ display: 'grid', gap: 16 }}>
+              <div className="info-kicker" style={{ color: 'var(--red, #ef4444)' }}>
+                No profile found
+              </div>
+              <h2 style={{ fontSize: '1.4rem', margin: 0 }}>
+                {firstName.trim()} {lastName.trim()} is not enrolled yet.
+              </h2>
+              <p style={{ fontSize: 13, color: 'var(--grey)', lineHeight: 1.7, margin: 0 }}>
+                Please complete enrolment first — we need a registered face and
+                voice profile to verify identity before releasing payment.
+              </p>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => nav('/enroll')}
+              >
+                Go to enrolment →
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setStep('identity')}
+                style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)' }}
+              >
+                Try a different name
+              </button>
+            </div>
           )}
 
           {step === 'selfie' && (

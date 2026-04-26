@@ -55,6 +55,25 @@ export async function verifyWorker(payload: {
 }
 
 /**
+ * Check whether an enrollment exists for the given (first_name, last_name) pair
+ * under the current tenant. Used by the auth-payment flow to avoid running
+ * facial / vocal verification on a non-enrolled user (which would always
+ * yield zeroed scores).
+ */
+export async function lookupEnrollment(payload: {
+  first_name: string
+  last_name: string
+}): Promise<{ found: boolean; student_id?: string; first_name?: string }> {
+  const res = await fetch(`${API}/edguard/lookup`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ ...payload, tenant_id: TENANT }),
+  })
+  if (!res.ok) throw new Error(`lookup failed: ${res.status}`)
+  return res.json()
+}
+
+/**
  * Real voice biometric verify — sends a freshly extracted 192-dim MFCC
  * embedding to the backend, which compares it (cosine sim) against the
  * embedding stored at enrollment time for (first_name, last_name).
