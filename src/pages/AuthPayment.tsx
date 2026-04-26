@@ -68,7 +68,6 @@ export function AuthPayment() {
   const [similarity, setSimilarity] = useState<number | null>(null)
   const [errorMsg, setErrorMsg] = useState<string>('')
   const [attempts, setAttempts] = useState(0)
-  const [composite, setComposite] = useState<Composite | null>(null)
   const [decision, setDecision] = useState<Decision | null>(null)
 
   const decide = useCallback((c: Composite): Decision => {
@@ -110,8 +109,6 @@ export function AuthPayment() {
       similarity: similarity ?? 0,
       reactionMs: avgMs,
     }
-    setComposite(c)
-
     const nextAttempts = attempts + 1
     setAttempts(nextAttempts)
 
@@ -126,7 +123,6 @@ export function AuthPayment() {
   const retry = useCallback(() => {
     setSelfie(null)
     setSimilarity(null)
-    setComposite(null)
     setDecision(null)
     setErrorMsg('')
     setStep('selfie')
@@ -135,7 +131,6 @@ export function AuthPayment() {
   const restart = useCallback(() => {
     setSelfie(null)
     setSimilarity(null)
-    setComposite(null)
     setDecision(null)
     setErrorMsg('')
     setAttempts(0)
@@ -256,22 +251,14 @@ export function AuthPayment() {
             </div>
           )}
 
-          {step === 'decision' && decision && composite && (
+          {step === 'decision' && decision && (
             <DecisionCard
               decision={decision}
-              composite={composite}
               attempts={attempts}
               onRetry={retry}
               onRestart={restart}
             />
           )}
-        </div>
-
-        <div className="info-card" style={{ marginTop: 14, fontSize: 11, color: 'var(--grey)', lineHeight: 1.6 }}>
-          Threshold: composite ≥ {PAYMENT_THRESHOLD.toFixed(2)} approves disbursement.
-          Composite ≥ {REVIEW_THRESHOLD.toFixed(2)} routes to human review.
-          After {MAX_ATTEMPTS} failed attempts the request is escalated for manual
-          authentication — never blocked.
         </div>
       </div>
     </div>
@@ -291,13 +278,12 @@ const inputStyle: React.CSSProperties = {
 
 interface DecisionCardProps {
   decision: Decision
-  composite: Composite
   attempts: number
   onRetry: () => void
   onRestart: () => void
 }
 
-function DecisionCard({ decision, composite, attempts, onRetry, onRestart }: DecisionCardProps) {
+function DecisionCard({ decision, attempts, onRetry, onRestart }: DecisionCardProps) {
   const tone = TONE[decision]
   const copy = COPY[decision]
   const canRetry = decision === 'REJECTED' && attempts < MAX_ATTEMPTS
@@ -339,33 +325,14 @@ function DecisionCard({ decision, composite, attempts, onRetry, onRestart }: Dec
         </div>
       </div>
 
-      <div className="info-card" style={{ display: 'grid', gap: 8, fontSize: 12 }}>
-        <Row k="Face similarity"  v={`${composite.similarity}%`} />
-        <Row k="Reaction (avg)"    v={`${composite.reactionMs} ms`} />
-        <Row k="Cognitive score"   v={composite.cognitiveScore.toFixed(2)} />
-        <Row k="Composite score"   v={composite.composite.toFixed(2)} highlight={tone.color} />
-        <Row k="Attempt"           v={`${attempts} / ${MAX_ATTEMPTS}`} />
-      </div>
-
       {canRetry && (
         <button className="btn btn-primary" onClick={onRetry}>
-          Try again ({MAX_ATTEMPTS - attempts} left)
+          Try again
         </button>
       )}
-      {!canRetry && (
-        <button className="btn btn-outline" onClick={onRestart}>
-          Start a new request
-        </button>
-      )}
-    </div>
-  )
-}
-
-function Row({ k, v, highlight }: { k: string; v: string; highlight?: string }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-      <span style={{ color: 'var(--grey)' }}>{k}</span>
-      <span style={{ fontWeight: 700, color: highlight ?? '#fff' }}>{v}</span>
+      <button className="btn btn-outline" onClick={onRestart}>
+        Start a new request
+      </button>
     </div>
   )
 }
