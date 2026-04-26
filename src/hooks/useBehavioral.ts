@@ -31,6 +31,11 @@ export type BehavioralProfile = {
     interval_ms_mean: number
     accel_gravity: VecStats
     rotation_rate: VecStats
+    /** Std deviation of |rotationRate| over the last 10 samples (rad/s).
+     *  Humans ≈ micro-tremor > 0.05 ; bots/emulators ≈ 0. */
+    gyro_std?: number
+    /** Std deviation of |accelerationIncludingGravity| over the session (m/s²). */
+    accel_variation?: number
   }
   orientation: {
     samples: number
@@ -45,6 +50,13 @@ export type BehavioralProfile = {
     inter_tap_ms_mean: number
     move_speed_px_per_ms_mean: number
     move_path_len_px_mean: number
+    /** Coefficient of variation (std/mean) of inter-tap intervals.
+     *  Humans ≈ 0.15+ ; bots ≈ 0 (perfectly regular). */
+    tap_cv?: number
+    /** Variance of PointerEvent.pressure values across pointerdown events. */
+    pressure_variance?: number
+    pressure_samples?: number[]
+    tap_intervals_ms?: number[]
   }
 }
 
@@ -124,26 +136,54 @@ function finalizeRunningVec(stats: RunningVec): VecStats {
   }
 }
 
-async function requestPermissionIfNeeded(
-  kind: 'motion' | 'orientation'
-): Promise<'granted' | 'denied' | 'prompt' | 'unsupported'> {
-  // iOS 13+: requestPermission exists and must be called from a user gesture.
-  // In our flow we start on mount; the call can fail — we treat it as "prompt".
+/**
+ * iOS 13+: DeviceMotionEvent.requestPermission MUST be called from a user gesture
+ * (click/touch handler), otherwise it throws / resolves to 'denied'. Call this
+ * helper from the first button click of the flow, then start the hook.
+ *
+ * - iOS Safari: returns true if user accepts, false if denied/throws.
+ * - Android Chrome / desktop: returns true (no permission gate).
+ */
+export async function requestMotionPermission(): Promise<boolean> {
+  if (typeof DeviceMotionEvent === 'undefined') return false
+  const dm = DeviceMotionEvent as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> }
+  if (typeof dm.requestPermission !== 'function') return true // Android / desktop
   try {
-    if (kind === 'motion') {
-      const anyDM = DeviceMotionEvent as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> }
-      if (!anyDM.requestPermission) return 'unsupported'
-      const res = await anyDM.requestPermission()
-      return res
-    }
-
-    const anyDO = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> }
-    if (!anyDO.requestPermission) return 'unsupported'
-    const res = await anyDO.requestPermission()
-    return res
+    const result = await dm.requestPermission()
+    return result === 'granted'
   } catch {
-    return 'prompt'
+    return false
   }
+}
+
+/**
+ * Same gate but for DeviceOrientationEvent. Some iOS versions request the two
+ * separately; granting motion implicitly grants orientation on most builds,
+ * but we expose this for completeness.
+ */
+export async function requestOrientationPermission(): Promise<boolean> {
+  if (typeof DeviceOrientationEvent === 'undefined') return false
+  const dm = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> }
+  if (typeof dm.requestPermission !== 'function') return true
+  try {
+    const result = await dm.requestPermission()
+    return result === 'granted'
+  } catch {
+    return false
+  }
+}
+
+function permissionSupportLabel(
+  kind: 'motion' | 'orientation'
+): 'granted' | 'denied' | 'prompt' | 'unsupported' {
+  // Best-effort label — we no longer call requestPermission() outside a gesture.
+  // Detect platform support; the actual gesture-time grant is tracked separately
+  // by the consumer via requestMotionPermission().
+  const Ev = kind === 'motion' ? DeviceMotionEvent : DeviceOrientationEvent
+  if (typeof Ev === 'undefined') return 'unsupported'
+  const anyEv = Ev as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> }
+  if (typeof anyEv.requestPermission !== 'function') return 'unsupported'
+  return 'prompt'
 }
 
 export function useBehavioral(): BehavioralController {
@@ -178,7 +218,15 @@ export function useBehavioral(): BehavioralController {
 
     active: new Map<number, { x: number; y: number; t: number; path: number }>(),
     lastTapUpTs: null as number | null,
+
+    // New — raw signals for behavioral scoring.
+    pressureSamples: [] as number[],
+    tapIntervalsMs: [] as number[],
   })
+
+  // Ring buffer of the last 10 |rotationRate| magnitudes for gyro_std.
+  const gyroMagsRef = useRef<number[]>([])
+  const GYRO_WINDOW = 10
 
   const permissionsRef = useRef<BehavioralProfile['permissions']>({
     motion: 'unsupported',
@@ -217,6 +265,52 @@ export function useBehavioral(): BehavioralController {
     const moveSpeedMean = t.moveSpeedN ? t.moveSpeedSum / t.moveSpeedN : 0
     const movePathMean = t.movePathN ? t.movePathSum / t.movePathN : 0
 
+    // --- New behavioral metrics ---
+
+    // Inter-tap CV = std / mean. Requires at least 2 intervals (3+ taps).
+    let tapCv: number | undefined
+    if (t.tapIntervalsMs.length >= 2 && interTapMean > 0) {
+      let sq = 0
+      for (let i = 0; i < t.tapIntervalsMs.length; i += 1) {
+        const d = t.tapIntervalsMs[i] - interTapMean
+        sq += d * d
+      }
+      const std = Math.sqrt(sq / Math.max(1, t.tapIntervalsMs.length - 1))
+      tapCv = std / interTapMean
+    }
+
+    // Pressure variance across all pointerdown samples that reported a value.
+    let pressureVariance: number | undefined
+    if (t.pressureSamples.length >= 2) {
+      let mean = 0
+      for (let i = 0; i < t.pressureSamples.length; i += 1) mean += t.pressureSamples[i]
+      mean /= t.pressureSamples.length
+      let sq = 0
+      for (let i = 0; i < t.pressureSamples.length; i += 1) {
+        const d = t.pressureSamples[i] - mean
+        sq += d * d
+      }
+      pressureVariance = sq / Math.max(1, t.pressureSamples.length - 1)
+    }
+
+    // gyro_std — std of |rotationRate| over the last 10 samples.
+    let gyroStd: number | undefined
+    if (gyroMagsRef.current.length >= 2) {
+      const arr = gyroMagsRef.current
+      let mean = 0
+      for (let i = 0; i < arr.length; i += 1) mean += arr[i]
+      mean /= arr.length
+      let sq = 0
+      for (let i = 0; i < arr.length; i += 1) {
+        const d = arr[i] - mean
+        sq += d * d
+      }
+      gyroStd = Math.sqrt(sq / Math.max(1, arr.length - 1))
+    }
+
+    const accelStats = finalizeRunningVec(motionVecRef.current)
+    const accelVariation = motionSamples >= 2 ? accelStats.mag_std : undefined
+
     const profile: BehavioralProfile = {
       device: {
         device_type: inferDeviceType(),
@@ -241,8 +335,10 @@ export function useBehavioral(): BehavioralController {
       motion: {
         samples: motionSamples,
         interval_ms_mean: intervalMean,
-        accel_gravity: finalizeRunningVec(motionVecRef.current),
+        accel_gravity: accelStats,
         rotation_rate: finalizeRunningVec(gyroVecRef.current),
+        gyro_std: gyroStd,
+        accel_variation: accelVariation,
       },
       orientation: {
         samples: orientSamples,
@@ -257,6 +353,10 @@ export function useBehavioral(): BehavioralController {
         inter_tap_ms_mean: interTapMean,
         move_speed_px_per_ms_mean: moveSpeedMean,
         move_path_len_px_mean: movePathMean,
+        tap_cv: tapCv,
+        pressure_variance: pressureVariance,
+        pressure_samples: t.pressureSamples.slice(),
+        tap_intervals_ms: t.tapIntervalsMs.slice(),
       },
     }
 
@@ -291,13 +391,19 @@ export function useBehavioral(): BehavioralController {
     touchRef.current.movePathN = 0
     touchRef.current.active.clear()
     touchRef.current.lastTapUpTs = null
+    touchRef.current.pressureSamples = []
+    touchRef.current.tapIntervalsMs = []
+    gyroMagsRef.current = []
 
     setIsCapturing(true)
 
-    // We try to request permissions, but this can fail if not initiated by gesture.
+    // We do NOT request iOS motion/orientation permissions here — doing so
+    // outside a user gesture is broken on iOS Safari (silently rejected).
+    // The consumer must call requestMotionPermission() from a click/touch
+    // handler before invoking start(). Here we just record platform support.
     permissionsRef.current = {
-      motion: await requestPermissionIfNeeded('motion'),
-      orientation: await requestPermissionIfNeeded('orientation'),
+      motion: permissionSupportLabel('motion'),
+      orientation: permissionSupportLabel('orientation'),
     }
 
     const onMotion = (e: DeviceMotionEvent) => {
@@ -305,7 +411,17 @@ export function useBehavioral(): BehavioralController {
       const a = e.accelerationIncludingGravity
       const r = e.rotationRate
       if (a) updateRunningVec(motionVecRef.current, a.x ?? 0, a.y ?? 0, a.z ?? 0)
-      if (r) updateRunningVec(gyroVecRef.current, r.alpha ?? 0, r.beta ?? 0, r.gamma ?? 0)
+      if (r) {
+        const ra = r.alpha ?? 0
+        const rb = r.beta ?? 0
+        const rg = r.gamma ?? 0
+        updateRunningVec(gyroVecRef.current, ra, rb, rg)
+        // Push |rotationRate| into the ring buffer (last GYRO_WINDOW samples).
+        const mag = Math.sqrt(ra * ra + rb * rb + rg * rg)
+        const buf = gyroMagsRef.current
+        buf.push(mag)
+        if (buf.length > GYRO_WINDOW) buf.shift()
+      }
 
       const now = performance.now()
       if (motionLastTsRef.current !== null) motionIntervalSumRef.current += (now - motionLastTsRef.current)
@@ -322,6 +438,13 @@ export function useBehavioral(): BehavioralController {
       const t = touchRef.current
       t.pointerDown += 1
       t.active.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), path: 0 })
+
+      // Pressure: meaningful only for touch/stylus inputs; mouse reports 0/0.5.
+      // We accept any non-default value (PointerEvent default is 0 for no-button
+      // pointer, 0.5 for active mouse, varies on touch screens).
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+        if (typeof e.pressure === 'number') t.pressureSamples.push(e.pressure)
+      }
     }
     const onPointerMove = (e: PointerEvent) => {
       if (isTextInputFocused()) return
@@ -361,8 +484,10 @@ export function useBehavioral(): BehavioralController {
         t.taps += 1
         t.tapDurSum += dur
         if (t.lastTapUpTs !== null) {
-          t.interTapSum += (now - t.lastTapUpTs)
+          const interval = now - t.lastTapUpTs
+          t.interTapSum += interval
           t.interTapN += 1
+          t.tapIntervalsMs.push(interval)
         }
         t.lastTapUpTs = now
       }

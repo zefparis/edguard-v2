@@ -3,7 +3,11 @@ import { SelfieCapture } from '../components/SelfieCapture'
 import { ReactionTime } from '../components/ReactionTime'
 import { sendAuthPaymentSignals, verifyWorker } from '../services/api'
 import { useVoiceBiometrics } from '../hooks/useVoiceBiometrics'
-import { useBehavioral, type BehavioralProfile } from '../hooks/useBehavioral'
+import {
+  useBehavioral,
+  requestMotionPermission,
+  type BehavioralProfile,
+} from '../hooks/useBehavioral'
 
 // Configurable composite score threshold (default 0.75)
 const PAYMENT_THRESHOLD = Number(import.meta.env.VITE_PAYMENT_THRESHOLD ?? 0.75)
@@ -16,16 +20,38 @@ type Decision = 'APPROVED' | 'REVIEW' | 'REJECTED' | 'MANUAL_REVIEW'
 const VOCAL_RECORD_MS = 3000
 
 /**
- * Heuristic 0..1 behavioral score derived from the BehavioralProfile.
- * Each cue is worth 0.25 — we don't bind the decision to it (always best-effort).
+ * Behavioral score — mean of every signal that returned a usable measurement.
+ *
+ * - Gyroscope std (rad/s) — humans micro-tremor > 0.05, bots ≈ 0.
+ * - Accelerometer magnitude std (m/s²) — humans hand variation > 0.1.
+ * - Inter-tap CV (std/mean) — humans 0.15+, bots near-zero.
+ * - Touch pressure variance — humans variable, emulators fixed.
+ *
+ * If no sensor produced data (desktop without taps, locked-down browser),
+ * fall back to a low “prior” that distinguishes a touch device from a
+ * vanilla desktop / headless.
  */
 function behavioralScoreFromProfile(p: BehavioralProfile): number {
-  let score = 0
-  if (p.session.duration_ms > 5000) score += 0.25
-  if (p.touch.pointer_down + p.touch.pointer_up + p.touch.taps > 0) score += 0.25
-  if (p.motion.samples > 5 || p.orientation.samples > 5) score += 0.25
-  if (p.device.touch_capable) score += 0.25
-  return Math.max(0, Math.min(1, score))
+  const scores: number[] = []
+
+  if (p.motion.gyro_std !== undefined) {
+    scores.push(Math.min(1, p.motion.gyro_std * 20))
+  }
+  if (p.motion.accel_variation !== undefined) {
+    scores.push(Math.min(1, p.motion.accel_variation * 10))
+  }
+  if (p.touch.tap_cv !== undefined) {
+    scores.push(Math.min(1, p.touch.tap_cv * 6))
+  }
+  if (p.touch.pressure_variance !== undefined) {
+    scores.push(Math.min(1, p.touch.pressure_variance * 10))
+  }
+
+  if (scores.length === 0) {
+    return p.device.touch_capable ? 0.4 : 0.2
+  }
+
+  return scores.reduce((a, b) => a + b, 0) / scores.length
 }
 
 /**
@@ -106,10 +132,11 @@ export function AuthPayment() {
   const behavioral = useBehavioral()
   const vocalEmbeddingRef = useRef<Float32Array | null>(null)
 
-  // Activate behavioral capture as soon as the page mounts so we have signal
-  // by the time the user reaches the reflex test. Stop on unmount as a guard.
+  // We DO NOT auto-start at mount: iOS Safari requires the motion permission
+  // prompt to fire from a user gesture. behavioral.start() is invoked from
+  // the “Continue” button on the identity step, after requestMotionPermission().
+  // Mount-time effect only registers the unmount cleanup.
   useEffect(() => {
-    void behavioral.start()
     return () => {
       try { behavioral.stop() } catch { /* already stopped */ }
     }
@@ -122,11 +149,17 @@ export function AuthPayment() {
     return 'REJECTED'
   }, [])
 
-  const handleIdentity = (e: React.FormEvent) => {
+  const handleIdentity = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
     if (!firstName.trim() || !lastName.trim()) return
+    // First user gesture of the flow — request iOS motion permission here so
+    // that the prompt actually appears (it cannot be requested from useEffect).
+    // We don't gate progression on the result: behavioral scoring degrades
+    // gracefully when motion is denied (the score uses pressure / tap_cv too).
+    try { await requestMotionPermission() } catch { /* user denied or unsupported */ }
+    void behavioral.start()
     setStep('selfie')
-  }
+  }, [firstName, lastName, behavioral])
 
   const handleSelfie = useCallback(async (b64: string) => {
     setSelfie(b64)
@@ -219,6 +252,7 @@ export function AuthPayment() {
     setVocalError('')
     vocalEmbeddingRef.current = null
     setStudentId(null)
+    // Retry triggered by a button click — we are still inside a gesture.
     void behavioral.start()
     setStep('selfie')
   }, [behavioral])
@@ -233,9 +267,10 @@ export function AuthPayment() {
     setVocalError('')
     vocalEmbeddingRef.current = null
     setStudentId(null)
-    void behavioral.start()
+    // Don't auto-start here — the user will click Continue on identity which
+    // re-triggers requestMotionPermission() from a fresh gesture.
     setStep('identity')
-  }, [behavioral])
+  }, [])
 
   const progressPct = useMemo(() => {
     switch (step) {
