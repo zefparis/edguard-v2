@@ -1,15 +1,44 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SelfieCapture } from '../components/SelfieCapture'
 import { ReactionTime } from '../components/ReactionTime'
-import { verifyWorker } from '../services/api'
+import { sendAuthPaymentSignals, verifyWorker } from '../services/api'
+import { useVoiceBiometrics } from '../hooks/useVoiceBiometrics'
+import { useBehavioral, type BehavioralProfile } from '../hooks/useBehavioral'
 
 // Configurable composite score threshold (default 0.75)
 const PAYMENT_THRESHOLD = Number(import.meta.env.VITE_PAYMENT_THRESHOLD ?? 0.75)
 const REVIEW_THRESHOLD = 0.6
 const MAX_ATTEMPTS = 3
 
-type Step = 'identity' | 'selfie' | 'reaction' | 'computing' | 'decision'
+type Step = 'identity' | 'selfie' | 'vocal' | 'reaction' | 'computing' | 'decision'
 type Decision = 'APPROVED' | 'REVIEW' | 'REJECTED' | 'MANUAL_REVIEW'
+
+const VOCAL_RECORD_MS = 3000
+
+/**
+ * Heuristic 0..1 behavioral score derived from the BehavioralProfile.
+ * Each cue is worth 0.25 — we don't bind the decision to it (always best-effort).
+ */
+function behavioralScoreFromProfile(p: BehavioralProfile): number {
+  let score = 0
+  if (p.session.duration_ms > 5000) score += 0.25
+  if (p.touch.pointer_down + p.touch.pointer_up + p.touch.taps > 0) score += 0.25
+  if (p.motion.samples > 5 || p.orientation.samples > 5) score += 0.25
+  if (p.device.touch_capable) score += 0.25
+  return Math.max(0, Math.min(1, score))
+}
+
+/**
+ * RMS energy heuristic for vocal capture quality, mirroring the heuristic used
+ * inside useVoiceBiometrics.enrollVoice. We compute it inline because the hook
+ * doesn't expose a single-shot "capture quality" helper.
+ */
+function rmsEnergy(samples: Float32Array): number {
+  if (samples.length === 0) return 0
+  let s = 0
+  for (let i = 0; i < samples.length; i += 1) s += samples[i] * samples[i]
+  return Math.sqrt(s / samples.length)
+}
 
 interface Composite {
   faceScore: number
@@ -69,6 +98,23 @@ export function AuthPayment() {
   const [errorMsg, setErrorMsg] = useState<string>('')
   const [attempts, setAttempts] = useState(0)
   const [decision, setDecision] = useState<Decision | null>(null)
+  const [studentId, setStudentId] = useState<string | null>(null)
+  const [vocalQuality, setVocalQuality] = useState<number | null>(null)
+  const [vocalError, setVocalError] = useState<string>('')
+
+  const voice = useVoiceBiometrics()
+  const behavioral = useBehavioral()
+  const vocalEmbeddingRef = useRef<Float32Array | null>(null)
+
+  // Activate behavioral capture as soon as the page mounts so we have signal
+  // by the time the user reaches the reflex test. Stop on unmount as a guard.
+  useEffect(() => {
+    void behavioral.start()
+    return () => {
+      try { behavioral.stop() } catch { /* already stopped */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const decide = useCallback((c: Composite): Decision => {
     if (c.composite >= PAYMENT_THRESHOLD) return 'APPROVED'
@@ -88,12 +134,34 @@ export function AuthPayment() {
     try {
       const res = await verifyWorker({ selfie_b64: b64, first_name: firstName, last_name: lastName })
       setSimilarity(res.similarity)
-      setStep('reaction')
+      setStudentId(res.student_id ?? null)
+      setStep('vocal')
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Face check failed')
       setStep('identity')
     }
   }, [firstName, lastName])
+
+  const handleVocal = useCallback(async () => {
+    setVocalError('')
+    try {
+      const samples = await voice.recordAudio(VOCAL_RECORD_MS)
+      const embedding = voice.extractMFCC(samples, 16000)
+      vocalEmbeddingRef.current = embedding
+      // Quality heuristic mirrors useVoiceBiometrics.enrollVoice:
+      // qEnergy = clamp01((rms - 0.01) / 0.1).
+      const energy = rmsEnergy(samples)
+      const quality = Math.max(0, Math.min(1, (energy - 0.01) / 0.1))
+      setVocalQuality(quality)
+      // Per spec: do NOT block on low quality — we record and continue.
+      setStep('reaction')
+    } catch (err) {
+      // Mic denied / unsupported — still continue with quality 0.
+      setVocalError(err instanceof Error ? err.message : 'Microphone unavailable')
+      setVocalQuality(0)
+      setStep('reaction')
+    }
+  }, [voice])
 
   const handleReactionDone = useCallback((avgMs: number) => {
     setStep('computing')
@@ -118,15 +186,42 @@ export function AuthPayment() {
     }
     setDecision(d)
     setStep('decision')
-  }, [similarity, attempts, decide])
+
+    // Fire-and-forget: ship vocal + behavioral + reflex signals to the backend
+    // so it can update edguard_sessions and re-emit an enriched HCS-U7 event.
+    if (studentId) {
+      let behavioralScore = 0
+      try {
+        const profile = behavioral.stop()
+        behavioralScore = behavioralScoreFromProfile(profile)
+      } catch {
+        behavioralScore = 0
+      }
+      void sendAuthPaymentSignals({
+        student_id: studentId,
+        vocal_score: vocalQuality ?? 0,
+        behavioral_score: behavioralScore,
+        reaction_ms: avgMs,
+      }).catch((err) => {
+        // Errors are intentionally swallowed at the UI level — enrichment
+        // is best-effort and never gates the decision.
+        console.warn('[auth-payment-signals] failed', err)
+      })
+    }
+  }, [similarity, attempts, decide, studentId, vocalQuality, behavioral])
 
   const retry = useCallback(() => {
     setSelfie(null)
     setSimilarity(null)
     setDecision(null)
     setErrorMsg('')
+    setVocalQuality(null)
+    setVocalError('')
+    vocalEmbeddingRef.current = null
+    setStudentId(null)
+    void behavioral.start()
     setStep('selfie')
-  }, [])
+  }, [behavioral])
 
   const restart = useCallback(() => {
     setSelfie(null)
@@ -134,14 +229,20 @@ export function AuthPayment() {
     setDecision(null)
     setErrorMsg('')
     setAttempts(0)
+    setVocalQuality(null)
+    setVocalError('')
+    vocalEmbeddingRef.current = null
+    setStudentId(null)
+    void behavioral.start()
     setStep('identity')
-  }, [])
+  }, [behavioral])
 
   const progressPct = useMemo(() => {
     switch (step) {
       case 'identity':  return 0
-      case 'selfie':    return 33
-      case 'reaction':  return 66
+      case 'selfie':    return 20
+      case 'vocal':     return 45
+      case 'reaction':  return 70
       case 'computing': return 90
       case 'decision':  return 100
     }
@@ -165,8 +266,8 @@ export function AuthPayment() {
             <span>before payment release.</span>
           </h1>
           <p className="hero-copy" style={{ fontSize: 14 }}>
-            Two quick checks — a live photo and a short reaction tap. Takes under
-            30 seconds.
+            Three quick checks — a live photo, a short voice sample and a tap
+            test. Under 45 seconds.
           </p>
 
           <div style={{
@@ -217,7 +318,7 @@ export function AuthPayment() {
 
           {step === 'selfie' && (
             <div style={{ display: 'grid', gap: 14 }}>
-              <div className="info-kicker">Step 1 of 2 — Live photo</div>
+              <div className="info-kicker">Step 1 of 3 — Live photo</div>
               <p style={{ fontSize: 13, color: 'var(--grey)', lineHeight: 1.7 }}>
                 Center your face in the frame and capture. We compare it to your
                 registered profile.
@@ -226,9 +327,44 @@ export function AuthPayment() {
             </div>
           )}
 
+          {step === 'vocal' && (
+            <div style={{ display: 'grid', gap: 14 }}>
+              <div className="info-kicker">Step 2 of 3 — Voice sample</div>
+              <p style={{ fontSize: 13, color: 'var(--grey)', lineHeight: 1.7 }}>
+                Hold the button and read this short sentence aloud for 3 seconds:
+                <br />
+                <em style={{ color: 'var(--ink)' }}>“I confirm this payment release.”</em>
+              </p>
+              {vocalError && (
+                <div className="info-card" style={{ color: 'var(--red)', fontSize: 13 }}>
+                  {vocalError} — continuing without voice.
+                </div>
+              )}
+              {voice.isRecording ? (
+                <div className="info-card" style={{ textAlign: 'center', padding: '20px 12px' }}>
+                  <div style={{ fontSize: 12, color: 'var(--grey)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 8 }}>
+                    Recording…
+                  </div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--accent)' }}>
+                    {(voice.countdownMs / 1000).toFixed(1)}s
+                  </div>
+                </div>
+              ) : (
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={handleVocal}
+                  disabled={voice.isRecording}
+                >
+                  Start voice sample →
+                </button>
+              )}
+            </div>
+          )}
+
           {step === 'reaction' && (
             <div style={{ display: 'grid', gap: 14 }}>
-              <div className="info-kicker">Step 2 of 2 — Quick tap test</div>
+              <div className="info-kicker">Step 3 of 3 — Quick tap test</div>
               <p style={{ fontSize: 13, color: 'var(--grey)', lineHeight: 1.7 }}>
                 Tap the button as fast as you can when it turns yellow. 5 short
                 rounds.

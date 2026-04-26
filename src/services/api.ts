@@ -53,3 +53,23 @@ export async function verifyWorker(payload: {
   if (!res.ok) throw new Error(`Verify failed: ${res.status}`)
   return res.json()
 }
+
+/**
+ * /auth-payment enrichment — sent fire-and-forget after the reflex test.
+ * The decision is computed client-side; this call lets the backend persist
+ * vocal/behavioral/reflex scores and re-emit a richer event to HCS-U7.
+ */
+export async function sendAuthPaymentSignals(payload: {
+  student_id: string
+  vocal_score: number
+  behavioral_score: number
+  reaction_ms: number
+}): Promise<{ success: boolean }> {
+  const res = await fetch(`${API}/edguard/auth-payment-signals`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ ...payload, tenant_id: TENANT }),
+  })
+  if (!res.ok) throw new Error(`auth-payment-signals failed: ${res.status}`)
+  return res.json()
+}
