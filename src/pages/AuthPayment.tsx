@@ -133,6 +133,11 @@ export function AuthPayment() {
   const [studentId, setStudentId] = useState<string | null>(null)
   const [vocalQuality, setVocalQuality] = useState<number | null>(null)
   const [vocalError, setVocalError] = useState<string>('')
+  // Forensic field — surfaces the exact failure reason on the decision screen
+  // so we can debug the APK voice flow without remote logcat access.
+  // Possible values: 'ok' | 'mic_<errName>' | 'mic_no_samples' |
+  //   'verify_http_<status>' | 'verify_<reason>' | 'verify_zero' | 'pending'
+  const [vocalDebug, setVocalDebug] = useState<string>('pending')
   const [lookupBusy, setLookupBusy] = useState(false)
 
   const voice = useVoiceBiometrics()
@@ -211,33 +216,62 @@ export function AuthPayment() {
 
   const handleVocal = useCallback(async () => {
     setVocalError('')
+    setVocalDebug('pending')
+    let samples: Float32Array
     try {
-      const samples = await voice.recordAudio(VOCAL_RECORD_MS)
-      const embedding = voice.extractMFCC(samples, 16000)
-      vocalEmbeddingRef.current = embedding
-
-      // Real biometric check: compare against the enrolled embedding via the
-      // backend (cosine similarity). A network or lookup failure must NEVER
-      // block the flow — we degrade to vocal_score = 0 and continue.
-      try {
-        const { vocal_score } = await vocalVerify({
-          first_name: firstName,
-          last_name: lastName,
-          vocal_embedding: Array.from(embedding),
-        })
-        setVocalQuality(Math.max(0, Math.min(1, vocal_score)))
-      } catch (verifyErr) {
-        console.warn('[vocal-verify] failed', verifyErr)
-        setVocalQuality(0)
-      }
-
-      setStep('reaction')
+      samples = await voice.recordAudio(VOCAL_RECORD_MS)
     } catch (err) {
-      // Mic denied / unsupported — still continue with quality 0.
-      setVocalError(err instanceof Error ? err.message : 'Microphone unavailable')
+      const errName = err instanceof Error ? err.name || 'Error' : 'Unknown'
+      const errMsg = err instanceof Error ? err.message : String(err)
+      console.error('[vocal] recordAudio failed', { errName, errMsg })
+      setVocalError(`${errName}: ${errMsg}`)
+      setVocalDebug(`mic_${errName}`)
       setVocalQuality(0)
       setStep('reaction')
+      return
     }
+
+    if (!samples || samples.length === 0) {
+      console.error('[vocal] recordAudio returned empty buffer')
+      setVocalError('Microphone returned empty audio')
+      setVocalDebug('mic_no_samples')
+      setVocalQuality(0)
+      setStep('reaction')
+      return
+    }
+
+    const embedding = voice.extractMFCC(samples, 16000)
+    vocalEmbeddingRef.current = embedding
+
+    // Real biometric check: compare against the enrolled embedding via the
+    // backend (cosine similarity). Backend may return HTTP 200 with
+    // vocal_score=0 + reason ('no_enrollment' | 'dim_mismatch') — surface it.
+    try {
+      const resp = await vocalVerify({
+        first_name: firstName,
+        last_name: lastName,
+        vocal_embedding: Array.from(embedding),
+      })
+      const score = Math.max(0, Math.min(1, resp.vocal_score))
+      setVocalQuality(score)
+      if (score > 0) {
+        setVocalDebug('ok')
+      } else if (resp.reason) {
+        setVocalDebug(`verify_${resp.reason}`)
+      } else {
+        setVocalDebug('verify_zero')
+      }
+      console.log('[vocal] verify result', { score, reason: resp.reason, samples: samples.length })
+    } catch (verifyErr) {
+      const errMsg = verifyErr instanceof Error ? verifyErr.message : String(verifyErr)
+      console.warn('[vocal-verify] failed', errMsg)
+      // Try to extract HTTP status if message has it ("vocal-verify failed: 502")
+      const httpMatch = /:\s*(\d{3})/.exec(errMsg)
+      setVocalDebug(httpMatch ? `verify_http_${httpMatch[1]}` : 'verify_network')
+      setVocalQuality(0)
+    }
+
+    setStep('reaction')
   }, [voice, firstName, lastName])
 
   const handleReactionDone = useCallback((avgMs: number) => {
@@ -294,6 +328,7 @@ export function AuthPayment() {
     setErrorMsg('')
     setVocalQuality(null)
     setVocalError('')
+    setVocalDebug('pending')
     vocalEmbeddingRef.current = null
     setStudentId(null)
     // Retry triggered by a button click — we are still inside a gesture.
@@ -309,6 +344,7 @@ export function AuthPayment() {
     setAttempts(0)
     setVocalQuality(null)
     setVocalError('')
+    setVocalDebug('pending')
     vocalEmbeddingRef.current = null
     setStudentId(null)
     // Don't auto-start here — the user will click Continue on identity which
@@ -498,12 +534,27 @@ export function AuthPayment() {
           )}
 
           {step === 'decision' && decision && (
-            <DecisionCard
-              decision={decision}
-              attempts={attempts}
-              onRetry={retry}
-              onRestart={restart}
-            />
+            <>
+              <DecisionCard
+                decision={decision}
+                attempts={attempts}
+                onRetry={retry}
+                onRestart={restart}
+              />
+              <div
+                className="info-card"
+                style={{
+                  marginTop: 12,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  color: 'var(--grey)',
+                  lineHeight: 1.6,
+                }}
+              >
+                <div><b>DBG vocal</b>: {vocalDebug} (score={vocalQuality ?? 'null'})</div>
+                {vocalError && <div>err: {vocalError}</div>}
+              </div>
+            </>
           )}
         </div>
       </div>
