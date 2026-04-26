@@ -55,6 +55,27 @@ export async function verifyWorker(payload: {
 }
 
 /**
+ * Real voice biometric verify — sends a freshly extracted 192-dim MFCC
+ * embedding to the backend, which compares it (cosine sim) against the
+ * embedding stored at enrollment time for (first_name, last_name).
+ *
+ * Returns vocal_score in [0, 1] (0 means no enrollment / mismatch / silence).
+ */
+export async function vocalVerify(payload: {
+  first_name: string
+  last_name: string
+  vocal_embedding: number[]
+}): Promise<{ vocal_score: number; matched: boolean; reason?: string }> {
+  const res = await fetch(`${API}/edguard/vocal-verify`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ ...payload, tenant_id: TENANT }),
+  })
+  if (!res.ok) throw new Error(`vocal-verify failed: ${res.status}`)
+  return res.json()
+}
+
+/**
  * /auth-payment enrichment — sent fire-and-forget after the reflex test.
  * The decision is computed client-side; this call lets the backend persist
  * vocal/behavioral/reflex scores and re-emit a richer event to HCS-U7.

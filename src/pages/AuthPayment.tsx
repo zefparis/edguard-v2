@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SelfieCapture } from '../components/SelfieCapture'
 import { ReactionTime } from '../components/ReactionTime'
-import { sendAuthPaymentSignals, verifyWorker } from '../services/api'
+import { sendAuthPaymentSignals, verifyWorker, vocalVerify } from '../services/api'
 import { useVoiceBiometrics } from '../hooks/useVoiceBiometrics'
 import {
   useBehavioral,
@@ -52,18 +52,6 @@ function behavioralScoreFromProfile(p: BehavioralProfile): number {
   }
 
   return scores.reduce((a, b) => a + b, 0) / scores.length
-}
-
-/**
- * RMS energy heuristic for vocal capture quality, mirroring the heuristic used
- * inside useVoiceBiometrics.enrollVoice. We compute it inline because the hook
- * doesn't expose a single-shot "capture quality" helper.
- */
-function rmsEnergy(samples: Float32Array): number {
-  if (samples.length === 0) return 0
-  let s = 0
-  for (let i = 0; i < samples.length; i += 1) s += samples[i] * samples[i]
-  return Math.sqrt(s / samples.length)
 }
 
 interface Composite {
@@ -181,12 +169,22 @@ export function AuthPayment() {
       const samples = await voice.recordAudio(VOCAL_RECORD_MS)
       const embedding = voice.extractMFCC(samples, 16000)
       vocalEmbeddingRef.current = embedding
-      // Quality heuristic mirrors useVoiceBiometrics.enrollVoice:
-      // qEnergy = clamp01((rms - 0.01) / 0.1).
-      const energy = rmsEnergy(samples)
-      const quality = Math.max(0, Math.min(1, (energy - 0.01) / 0.1))
-      setVocalQuality(quality)
-      // Per spec: do NOT block on low quality — we record and continue.
+
+      // Real biometric check: compare against the enrolled embedding via the
+      // backend (cosine similarity). A network or lookup failure must NEVER
+      // block the flow — we degrade to vocal_score = 0 and continue.
+      try {
+        const { vocal_score } = await vocalVerify({
+          first_name: firstName,
+          last_name: lastName,
+          vocal_embedding: Array.from(embedding),
+        })
+        setVocalQuality(Math.max(0, Math.min(1, vocal_score)))
+      } catch (verifyErr) {
+        console.warn('[vocal-verify] failed', verifyErr)
+        setVocalQuality(0)
+      }
+
       setStep('reaction')
     } catch (err) {
       // Mic denied / unsupported — still continue with quality 0.
@@ -194,7 +192,7 @@ export function AuthPayment() {
       setVocalQuality(0)
       setStep('reaction')
     }
-  }, [voice])
+  }, [voice, firstName, lastName])
 
   const handleReactionDone = useCallback((avgMs: number) => {
     setStep('computing')
