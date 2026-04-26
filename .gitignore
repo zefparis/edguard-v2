@@ -40,3 +40,17 @@ Thumbs.db
 
 .vercel
 .env*.local
+
+# Capacitor native build artefacts (committed sources kept; build outputs ignored)
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/captures/
+android/.idea/
+android/app/release/
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+ios/App/App/public/
+android/app/src/main/assets/public/

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">EdGuard</string>
+    <string name="title_activity_main">EdGuard</string>
+    <string name="package_name">com.iasolution.edguard</string>
+    <string name="custom_url_scheme">com.iasolution.edguard</string>
+</resources>

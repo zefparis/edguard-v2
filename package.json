@@ -8,6 +8,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.1",
+    "@capacitor/cli": "^7.6.2",
+    "@capacitor/core": "^8.3.1",
+    "@capacitor/ios": "^8.3.1",
     "@noble/post-quantum": "^0.5.4",
     "onnxruntime-web": "^1.24.3",
     "react": "^18.2.0",
@@ -20,7 +24,7 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.7.0",
-    "typescript": "^5.9.3",
+    "typescript": "5.5",
     "vite": "^5.4.21"
   }
 }

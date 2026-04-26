@@ -1,0 +1,13 @@
+{
+  "appId": "com.iasolution.edguard",
+  "appName": "EdGuard",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
