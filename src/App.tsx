@@ -3,6 +3,7 @@ import { Home } from './pages/Home'
 import { Enroll } from './pages/Enroll'
 import { Verify } from './pages/Verify'
 import { ExamSession } from './pages/ExamSession'
+import { AuthPayment } from './pages/AuthPayment'
 import './index.css'
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
         <Route path="/enroll"  element={<Enroll />} />
         <Route path="/verify"  element={<Verify />} />
         <Route path="/session" element={<ExamSession />} />
+        <Route path="/auth-payment" element={<AuthPayment />} />
       </Routes>
     </BrowserRouter>
   )
