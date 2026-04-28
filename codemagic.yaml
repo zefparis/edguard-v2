@@ -46,11 +46,11 @@ workflows:
 
           keychain initialize
 
+          keychain add-certificates
+
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
-
-          keychain add-certificates
 
           echo "== Code signing identities =="
           security find-identity -v -p codesigning
