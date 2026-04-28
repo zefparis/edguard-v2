@@ -7,9 +7,6 @@ workflows:
     environment:
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.iasolution.edguard
       vars:
         BUNDLE_ID: "com.iasolution.edguard"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
@@ -23,9 +20,16 @@ workflows:
         script: npx cap sync ios
       - name: Install pods
         script: cd ios/App && pod install
+      - name: Sign
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files com.iasolution.edguard \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Build IPA
         script: |
-          xcode-project use-profiles
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
