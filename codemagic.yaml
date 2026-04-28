@@ -7,9 +7,6 @@ workflows:
     environment:
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.iasolution.edguard
       vars:
         BUNDLE_ID: "com.iasolution.edguard"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
