@@ -13,7 +13,6 @@ workflows:
         distribution_type: app_store
         bundle_identifier: com.iasolution.edguard
       vars:
-        BUNDLE_ID: "com.iasolution.edguard"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
 
@@ -43,11 +42,8 @@ workflows:
         script: |
           set -euo pipefail
           keychain initialize
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE \
-            --create
+          keychain add-certificates
           xcode-project use-profiles
-
           security find-identity -v -p codesigning
 
       - name: Build IPA
