@@ -7,14 +7,13 @@ workflows:
     environment:
       xcode: latest
       cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.iasolution.edguard
       vars:
         BUNDLE_ID: "com.iasolution.edguard"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
-        XCODE_CONFIGURATION: "Release"
-        ARCHIVE_PATH: "build/ios/archive/App.xcarchive"
-        EXPORT_PATH: "build/ios/ipa"
-        EXPORT_OPTIONS_PLIST: "/tmp/ExportOptions.plist"
     scripts:
       - name: Install dependencies
         script: |
@@ -37,192 +36,23 @@ workflows:
           cd ios/App
           pod install
 
-      - name: Fetch and validate iOS signing files
+      - name: Sign
         script: |
-          set -euo pipefail
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILE_DIR"
-
           keychain initialize
-
           keychain add-certificates
-
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
+          xcode-project use-profiles
 
-          echo "== Code signing identities =="
-          security find-identity -v -p codesigning
-
-          echo "== Provisioning profiles =="
-          find "$PROFILE_DIR" -type f -name "*.mobileprovision" -print || true
-
-          MATCHED_PROFILES_FILE="/tmp/matched_profiles.txt"
-          : > "$MATCHED_PROFILES_FILE"
-
-          while IFS= read -r profile; do
-            [ -f "$profile" ] || continue
-            plist="/tmp/profile_$(basename "$profile").plist"
-            security cms -D -i "$profile" > "$plist"
-
-            app_id=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$plist" 2>/dev/null || true)
-            profile_name=$(/usr/libexec/PlistBuddy -c "Print :Name" "$plist" 2>/dev/null || true)
-            profile_uuid=$(/usr/libexec/PlistBuddy -c "Print :UUID" "$plist" 2>/dev/null || true)
-            team_id=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$plist" 2>/dev/null || true)
-
-            echo "PROFILE_CANDIDATE path=$profile"
-            echo "PROFILE_CANDIDATE name=$profile_name"
-            echo "PROFILE_CANDIDATE uuid=$profile_uuid"
-            echo "PROFILE_CANDIDATE team=$team_id"
-            echo "PROFILE_CANDIDATE app_id=$app_id"
-
-            if printf '%s' "$app_id" | grep -Eq "^[A-Z0-9]+\.$BUNDLE_ID$"; then
-              printf '%s\t%s\t%s\t%s\n' "$profile" "$profile_name" "$profile_uuid" "$team_id" >> "$MATCHED_PROFILES_FILE"
-            fi
-          done < <(find "$PROFILE_DIR" -type f -name "*.mobileprovision" -print)
-
-          if [ ! -s "$MATCHED_PROFILES_FILE" ]; then
-            echo "ERROR: no provisioning profile matches BUNDLE_ID=$BUNDLE_ID"
-            exit 1
-          fi
-
-          PROFILE_PATH=$(tail -n 1 "$MATCHED_PROFILES_FILE" | cut -f1)
-          PROFILE_NAME=$(tail -n 1 "$MATCHED_PROFILES_FILE" | cut -f2)
-          PROFILE_UUID=$(tail -n 1 "$MATCHED_PROFILES_FILE" | cut -f3)
-          TEAM_ID=$(tail -n 1 "$MATCHED_PROFILES_FILE" | cut -f4)
-
-          if [ -z "$PROFILE_PATH" ] || [ ! -f "$PROFILE_PATH" ]; then
-            echo "ERROR: selected provisioning profile file is missing"
-            exit 1
-          fi
-
-          if [ -z "$PROFILE_NAME" ]; then
-            echo "ERROR: PROFILE_NAME is empty"
-            exit 1
-          fi
-
-          if [ -z "$TEAM_ID" ]; then
-            echo "ERROR: TEAM_ID is empty"
-            exit 1
-          fi
-
-          if [ -z "$PROFILE_UUID" ]; then
-            echo "ERROR: PROFILE_UUID is empty"
-            exit 1
-          fi
-
-          echo "PROFILE_PATH=$PROFILE_PATH" | tee -a "$CM_ENV"
-          echo "PROFILE_NAME=$PROFILE_NAME" | tee -a "$CM_ENV"
-          echo "PROFILE_UUID=$PROFILE_UUID" | tee -a "$CM_ENV"
-          echo "TEAM_ID=$TEAM_ID" | tee -a "$CM_ENV"
-
-          echo "== Selected signing profile =="
-          echo "PROFILE_PATH=$PROFILE_PATH"
-          echo "PROFILE_NAME=$PROFILE_NAME"
-          echo "PROFILE_UUID=$PROFILE_UUID"
-          echo "TEAM_ID=$TEAM_ID"
-          echo "BUNDLE_ID=$BUNDLE_ID"
-
-      - name: Generate ExportOptions.plist
+      - name: Build IPA
         script: |
-          set -euo pipefail
-
-          if [ -z "${PROFILE_NAME:-}" ]; then
-            echo "ERROR: PROFILE_NAME is not exported"
-            exit 1
-          fi
-
-          if [ -z "${TEAM_ID:-}" ]; then
-            echo "ERROR: TEAM_ID is not exported"
-            exit 1
-          fi
-
-          cat > "$EXPORT_OPTIONS_PLIST" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>teamID</key>
-            <string>$TEAM_ID</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>$BUNDLE_ID</key>
-              <string>$PROFILE_NAME</string>
-            </dict>
-            <key>uploadBitcode</key>
-            <false/>
-            <key>uploadSymbols</key>
-            <true/>
-          </dict>
-          </plist>
-          EOF
-
-          plutil -lint "$EXPORT_OPTIONS_PLIST"
-          cat "$EXPORT_OPTIONS_PLIST"
-
-      - name: Validate Xcode signing settings
-        script: |
-          set -euo pipefail
-
-          echo "== Xcode build settings before archive =="
-          xcodebuild -showBuildSettings \
-            -workspace "$XCODE_WORKSPACE" \
-            -scheme "$XCODE_SCHEME" \
-            -configuration "$XCODE_CONFIGURATION" \
-            | grep -E "PRODUCT_BUNDLE_IDENTIFIER|CODE_SIGN_STYLE|PROVISIONING_PROFILE|DEVELOPMENT_TEAM" || true
-
-          PROJECT_BUNDLE_ID=$(xcodebuild -showBuildSettings \
-            -workspace "$XCODE_WORKSPACE" \
-            -scheme "$XCODE_SCHEME" \
-            -configuration "$XCODE_CONFIGURATION" \
-            | awk -F'= ' '/PRODUCT_BUNDLE_IDENTIFIER/ {print $2; exit}')
-
-          if [ "$PROJECT_BUNDLE_ID" != "$BUNDLE_ID" ]; then
-            echo "ERROR: Xcode bundle id mismatch. Expected=$BUNDLE_ID Actual=$PROJECT_BUNDLE_ID"
-            exit 1
-          fi
-
-      - name: Archive iOS app
-        script: |
-          set -euo pipefail
-
-          rm -rf "$ARCHIVE_PATH"
-          mkdir -p "$(dirname "$ARCHIVE_PATH")"
-
-          xcodebuild archive \
-            -workspace "$XCODE_WORKSPACE" \
-            -scheme "$XCODE_SCHEME" \
-            -configuration "$XCODE_CONFIGURATION" \
-            -archivePath "$ARCHIVE_PATH" \
-            -destination "generic/platform=iOS" \
-            DEVELOPMENT_TEAM="$TEAM_ID" \
-            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-            CODE_SIGN_STYLE=Manual \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
-            clean archive
-
-      - name: Export IPA
-        script: |
-          set -euo pipefail
-
-          rm -rf "$EXPORT_PATH"
-          mkdir -p "$EXPORT_PATH"
-
-          xcodebuild -exportArchive \
-            -archivePath "$ARCHIVE_PATH" \
-            -exportPath "$EXPORT_PATH" \
-            -exportOptionsPlist "$EXPORT_OPTIONS_PLIST"
-
-          find "$EXPORT_PATH" -type f -name "*.ipa" -print
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/archive/App.xcarchive
 
     publishing:
       app_store_connect:
