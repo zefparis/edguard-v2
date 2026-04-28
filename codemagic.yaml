@@ -46,6 +46,14 @@ workflows:
           xcode-project use-profiles
           security find-identity -v -p codesigning
 
+      - name: Force iOS deployment target
+        script: |
+          set -euo pipefail
+          cd ios/App
+          sed -i.bak 's/IPHONEOS_DEPLOYMENT_TARGET = 14.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' App.xcodeproj/project.pbxproj
+          sed -i.bak 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' App.xcodeproj/project.pbxproj
+          grep -n "IPHONEOS_DEPLOYMENT_TARGET" App.xcodeproj/project.pbxproj
+
       - name: Build IPA
         script: |
           set -euo pipefail
