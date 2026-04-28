@@ -9,6 +9,9 @@ workflows:
     environment:
       xcode: latest
       cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.iasolution.edguard
       vars:
         BUNDLE_ID: "com.iasolution.edguard"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
@@ -36,126 +39,27 @@ workflows:
           cd ios/App
           pod install
 
-      - name: Sign and build IPA manually
+      - name: Configure signing
         script: |
           set -euo pipefail
-
           keychain initialize
-
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
+          xcode-project use-profiles
 
-          keychain add-certificates
-
-          echo "Code signing identities:"
           security find-identity -v -p codesigning
 
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-
-          echo "Provisioning profiles:"
-          find "$PROFILE_DIR" -type f -name "*.mobileprovision" -print
-
-          PROFILE_PATH=""
-          for profile in "$PROFILE_DIR"/*.mobileprovision; do
-            [ -e "$profile" ] || continue
-
-            security cms -D -i "$profile" > /tmp/profile.plist
-            APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/profile.plist || true)
-
-            if echo "$APP_ID" | grep -q "$BUNDLE_ID"; then
-              PROFILE_PATH="$profile"
-              break
-            fi
-          done
-
-          if [ -z "$PROFILE_PATH" ]; then
-            echo "No provisioning profile matching $BUNDLE_ID found"
-            exit 1
-          fi
-
-          echo "Using profile: $PROFILE_PATH"
-
-          security cms -D -i "$PROFILE_PATH" > /tmp/profile.plist
-
-          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /tmp/profile.plist)
-          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.plist)
-          APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /tmp/profile.plist)
-
-          if [ -z "$PROFILE_NAME" ]; then
-            echo "PROFILE_NAME is empty"
-            exit 1
-          fi
-
-          if [ -z "$TEAM_ID" ]; then
-            echo "TEAM_ID is empty"
-            exit 1
-          fi
-
-          if ! echo "$APP_ID" | grep -q "$BUNDLE_ID"; then
-            echo "Profile does not match BUNDLE_ID"
-            echo "APP_ID=$APP_ID"
-            echo "BUNDLE_ID=$BUNDLE_ID"
-            exit 1
-          fi
-
-          echo "PROFILE_NAME=$PROFILE_NAME"
-          echo "TEAM_ID=$TEAM_ID"
-          echo "APP_ID=$APP_ID"
-
-          echo "Build settings before archive:"
-          xcodebuild -showBuildSettings \
-            -workspace "$XCODE_WORKSPACE" \
-            -scheme "$XCODE_SCHEME" \
-            -configuration Release \
-            | grep -E "PRODUCT_BUNDLE_IDENTIFIER|CODE_SIGN_STYLE|PROVISIONING_PROFILE|DEVELOPMENT_TEAM" || true
-
-          mkdir -p build/ios/archive
-          mkdir -p build/ios/ipa
-
-          cat > /tmp/ExportOptions.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>teamID</key>
-            <string>$TEAM_ID</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>$BUNDLE_ID</key>
-              <string>$PROFILE_NAME</string>
-            </dict>
-            <key>uploadSymbols</key>
-            <true/>
-          </dict>
-          </plist>
-          EOF
-
-          xcodebuild archive \
-            -workspace "$XCODE_WORKSPACE" \
-            -scheme "$XCODE_SCHEME" \
-            -configuration Release \
-            -archivePath build/ios/archive/App.xcarchive \
-            -destination "generic/platform=iOS" \
-            DEVELOPMENT_TEAM="$TEAM_ID" \
-            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-            CODE_SIGN_STYLE=Manual \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
-            COMPILER_INDEX_STORE_ENABLE=NO
-
-          xcodebuild -exportArchive \
-            -archivePath build/ios/archive/App.xcarchive \
-            -exportPath build/ios/ipa \
-            -exportOptionsPlist /tmp/ExportOptions.plist
+      - name: Build IPA
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/archive/*.xcarchive
-      - /tmp/ExportOptions.plist
+      - /tmp/xcodebuild_logs/*.log
 
     publishing:
       app_store_connect:
