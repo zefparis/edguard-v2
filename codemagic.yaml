@@ -61,6 +61,16 @@ workflows:
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
 
+      - name: Upload to App Store (explicit)
+        script: |
+          xcrun altool --upload-app \
+            --type ios \
+            --file build/ios/ipa/App.ipa \
+            --apiKey $APP_STORE_CONNECT_KEY_IDENTIFIER \
+            --apiIssuer $APP_STORE_CONNECT_ISSUER_ID \
+            2>&1 | tee /tmp/altool_upload.log
+          cat /tmp/altool_upload.log
+
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
