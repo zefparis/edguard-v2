@@ -51,5 +51,7 @@
 	<string>EdGuard needs microphone for voice verification</string>
 	<key>NSMotionUsageDescription</key>
 	<string>EdGuard needs motion sensors for behavioral verification</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>EdGuard needs speech recognition for voice identity verification</string>
 </dict>
 </plist>
